@@ -26,7 +26,7 @@ const VendorCart = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { signOut } = useAuth();
-  const { cart, updateQuantity, removeFromCart, clearCart, getCartTotals } = useCart();
+  const { cart, loading, error: cartError, updateQuantity, removeFromCart, clearCart, getCartTotals, purchaseCart } = useCart();
   const { showToast, ToastContainer } = useToast();
   const { triggerPurchaseRefresh } = useDataRefresh();
 
@@ -34,10 +34,14 @@ const VendorCart = () => {
   const [error, setError] = useState(null);
   const [purchasing, setPurchasing] = useState(false);
   const [purchaseSuccess, setPurchaseSuccess] = useState(false);
+  const [shippingAddress, setShippingAddress] = useState('');
+  const [notes, setNotes] = useState('');
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate('/');
+    const { error } = await signOut();
+    if (!error) {
+      navigate('/signin');
+    }
   };
 
   const sidebarItems = [
@@ -62,65 +66,59 @@ const VendorCart = () => {
       setPurchasing(true);
       setError(null);
 
-      // Group items by supplier
-      const itemsBySupplier = cart.reduce((acc, item) => {
-        const supplierId = item.supplier_id || 'unknown';
-        if (!acc[supplierId]) {
-          acc[supplierId] = [];
-        }
-        acc[supplierId].push(item);
-        return acc;
-      }, {});
-
-      // Create orders for each supplier sequentially to avoid order number conflicts
-      const createdOrders = [];
-      for (const [supplierId, items] of Object.entries(itemsBySupplier)) {
-        const orderData = {
-          supplier_id: supplierId,
-          shipping_address: 'Default shipping address', // You might want to make this configurable
-          notes: `Bulk order from cart - ${items.length} items`
-        };
-
-        const order = await ordersAPI.create(orderData);
-
-        const orderItems = items.map(item => ({
-          product_id: item.id,
-          quantity: item.quantity,
-          unit_price: item.price
-        }));
-
-        await ordersAPI.addOrderItems(order.id, orderItems);
-        createdOrders.push(order);
-
-        // Small delay between orders to ensure unique timestamps
-        if (createdOrders.length < Object.keys(itemsBySupplier).length) {
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }
-      }
+      // Use the cart API to purchase all items
+      const orders = await purchaseCart(shippingAddress, notes);
 
       setPurchaseSuccess(true);
-      clearCart();
-      showToast(`Successfully placed ${createdOrders.length} order(s)! Stock updated.`, 'success');
+      showToast(`Successfully created ${orders.length} order(s)!`, 'success');
 
-      // Trigger global data refresh for all components
+      // Trigger global data refresh
       triggerPurchaseRefresh({
-        orderCount: createdOrders.length,
-        orderIds: createdOrders.map(o => o.id),
-        totalItems: cart.length
+        cartPurchase: true,
+        itemCount: cart.length,
+        orderIds: orders.map(order => order.id)
       });
 
-      // Show success message for 3 seconds then redirect
+      // Navigate to orders page after delay
       setTimeout(() => {
-        setPurchaseSuccess(false);
         navigate('/vendor/orders');
-      }, 3000);
+      }, 2000);
 
     } catch (err) {
-      console.error('Error purchasing items:', err);
-      setError(err.message || 'Failed to process purchase');
-      showToast('Failed to process purchase', 'error');
+      console.error('Error purchasing cart items:', err);
+      setError(err.message || 'Failed to purchase items');
+      showToast('Failed to purchase items', 'error');
     } finally {
       setPurchasing(false);
+    }
+  };
+
+  // Handle quantity change
+  const handleQuantityChange = async (productId, newQuantity) => {
+    try {
+      await updateQuantity(productId, newQuantity);
+    } catch (err) {
+      showToast('Failed to update quantity', 'error');
+    }
+  };
+
+  // Handle remove item
+  const handleRemoveItem = async (productId) => {
+    try {
+      await removeFromCart(productId);
+      showToast('Item removed from cart', 'success');
+    } catch (err) {
+      showToast('Failed to remove item', 'error');
+    }
+  };
+
+  // Handle clear cart
+  const handleClearCart = async () => {
+    try {
+      await clearCart();
+      showToast('Cart cleared', 'success');
+    } catch (err) {
+      showToast('Failed to clear cart', 'error');
     }
   };
 
@@ -207,10 +205,17 @@ const VendorCart = () => {
             </div>
           )}
 
-          {error && (
+          {(error || cartError) && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-red-600" />
-              <span className="text-red-800">{error}</span>
+              <span className="text-red-800">{error || cartError}</span>
+            </div>
+          )}
+
+          {loading && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-3">
+              <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+              <span className="text-blue-800">Loading cart...</span>
             </div>
           )}
 
@@ -257,15 +262,17 @@ const VendorCart = () => {
                       {/* Quantity Controls */}
                       <div className="flex items-center gap-3">
                         <button
-                          onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                          onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
                           className="w-8 h-8 rounded-full border border-secondary-300 flex items-center justify-center hover:bg-secondary-50 transition-colors"
+                          disabled={loading}
                         >
                           <Minus className="w-4 h-4" />
                         </button>
                         <span className="w-12 text-center font-medium">{item.quantity || 0}</span>
                         <button
-                          onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                          onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
                           className="w-8 h-8 rounded-full border border-secondary-300 flex items-center justify-center hover:bg-secondary-50 transition-colors"
+                          disabled={loading || (item.quantity >= (item.stock_quantity || 0))}
                         >
                           <Plus className="w-4 h-4" />
                         </button>
@@ -278,8 +285,9 @@ const VendorCart = () => {
 
                       {/* Remove Button */}
                       <button
-                        onClick={() => removeFromCart(item.id)}
+                        onClick={() => handleRemoveItem(item.id)}
                         className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        disabled={loading}
                       >
                         <Trash2 className="w-5 h-5" />
                       </button>
@@ -288,13 +296,47 @@ const VendorCart = () => {
                 ))}
               </div>
 
+              {/* Shipping Information */}
+              <div className="bg-white rounded-lg p-6 border border-secondary-200">
+                <h3 className="text-lg font-medium text-secondary-900 mb-4">Shipping Information</h3>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-secondary-700 mb-2">
+                      Shipping Address
+                    </label>
+                    <textarea
+                      value={shippingAddress}
+                      onChange={(e) => setShippingAddress(e.target.value)}
+                      placeholder="Enter your shipping address..."
+                      className="w-full px-3 py-2 border border-secondary-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
+                      rows={3}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-secondary-700 mb-2">
+                      Order Notes (Optional)
+                    </label>
+                    <textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="Any special instructions or notes..."
+                      className="w-full px-3 py-2 border border-secondary-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
+                      rows={2}
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* Cart Summary */}
               <div className="bg-white rounded-lg p-6 border border-secondary-200">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-medium text-secondary-900">Order Summary</h3>
                   <button
-                    onClick={clearCart}
+                    onClick={handleClearCart}
                     className="text-sm text-red-600 hover:text-red-700 transition-colors"
+                    disabled={loading}
                   >
                     Clear Cart
                   </button>

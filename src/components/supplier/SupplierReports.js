@@ -16,8 +16,39 @@ import {
   Download,
   Loader2,
   AlertTriangle,
-  Calendar
+  Calendar,
+  RefreshCw,
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  Clock,
+  CheckCircle,
+  X
 } from 'lucide-react';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 const SupplierReports = () => {
   const navigate = useNavigate();
@@ -28,7 +59,9 @@ const SupplierReports = () => {
   const [reportsData, setReportsData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState('Weekly');
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   // Load comprehensive reports data on component mount
   useEffect(() => {
@@ -36,8 +69,9 @@ const SupplierReports = () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await dashboardAPI.getComprehensiveReports();
+        const data = await dashboardAPI.getComprehensiveReports(selectedPeriod);
         setReportsData(data);
+        setLastUpdated(new Date());
       } catch (err) {
         console.error('Error loading reports data:', err);
         setError(err.message || 'Failed to load reports data');
@@ -47,11 +81,37 @@ const SupplierReports = () => {
     };
 
     loadReportsData();
-  }, []);
+
+    // Set up auto-refresh every 60 seconds for real-time data
+    const refreshInterval = setInterval(() => {
+      loadReportsData();
+    }, 60000);
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(refreshInterval);
+  }, [selectedPeriod]);
+
+  // Manual refresh function
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
+      setError(null);
+      const data = await dashboardAPI.getComprehensiveReports(selectedPeriod);
+      setReportsData(data);
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.error('Error refreshing reports data:', err);
+      setError(err.message || 'Failed to refresh reports data');
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate('/');
+    const { error } = await signOut();
+    if (!error) {
+      navigate('/signin');
+    }
   };
 
   const sidebarItems = [
@@ -80,6 +140,132 @@ const SupplierReports = () => {
   // Format percentage
   const formatPercentage = (value) => {
     return `${(value || 0).toFixed(1)}%`;
+  };
+
+  // Create chart data for sales trend
+  const createSalesTrendChartData = () => {
+    if (!reportsData?.salesTrendData) return null;
+
+    const data = reportsData.salesTrendData;
+
+    return {
+      labels: data.map(item => item.label),
+      datasets: [
+        {
+          label: 'Revenue (₹)',
+          data: data.map(item => item.revenue),
+          borderColor: 'rgb(59, 130, 246)',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          fill: true,
+          tension: 0.4,
+          pointBackgroundColor: 'rgb(59, 130, 246)',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 4,
+        },
+        {
+          label: 'Orders',
+          data: data.map(item => item.orders),
+          borderColor: 'rgb(16, 185, 129)',
+          backgroundColor: 'rgba(16, 185, 129, 0.1)',
+          fill: true,
+          tension: 0.4,
+          pointBackgroundColor: 'rgb(16, 185, 129)',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 4,
+          yAxisID: 'y1',
+        }
+      ]
+    };
+  };
+
+  // Chart options
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top',
+        labels: {
+          usePointStyle: true,
+          padding: 20,
+          font: {
+            family: 'Inter',
+            size: 12
+          }
+        }
+      },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        titleColor: '#fff',
+        bodyColor: '#fff',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderWidth: 1,
+        cornerRadius: 8,
+        displayColors: true,
+        callbacks: {
+          label: function(context) {
+            if (context.datasetIndex === 0) {
+              return `Revenue: ₹${context.parsed.y.toLocaleString('en-IN')}`;
+            } else {
+              return `Orders: ${context.parsed.y}`;
+            }
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false
+        },
+        ticks: {
+          font: {
+            family: 'Inter',
+            size: 11
+          },
+          color: '#6B7280'
+        }
+      },
+      y: {
+        type: 'linear',
+        display: true,
+        position: 'left',
+        grid: {
+          color: 'rgba(0, 0, 0, 0.05)'
+        },
+        ticks: {
+          font: {
+            family: 'Inter',
+            size: 11
+          },
+          color: '#6B7280',
+          callback: function(value) {
+            return '₹' + value.toLocaleString('en-IN');
+          }
+        }
+      },
+      y1: {
+        type: 'linear',
+        display: true,
+        position: 'right',
+        grid: {
+          drawOnChartArea: false,
+        },
+        ticks: {
+          font: {
+            family: 'Inter',
+            size: 11
+          },
+          color: '#6B7280'
+        }
+      }
+    },
+    interaction: {
+      intersect: false,
+      mode: 'index'
+    }
   };
 
   // Create chart data for profit & revenue
@@ -148,6 +334,19 @@ const SupplierReports = () => {
 
           {/* Right Side */}
           <div className="flex items-center gap-5">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-inter text-secondary-700 hover:text-secondary-900 hover:bg-secondary-50 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+            {lastUpdated && (
+              <span className="text-xs text-secondary-500">
+                Last updated: {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
             <button className="p-2 hover:bg-secondary-50 rounded-lg transition-colors">
               <Bell className="w-6 h-6 text-secondary-700" />
             </button>
@@ -179,6 +378,7 @@ const SupplierReports = () => {
                   <option value="Weekly">Weekly</option>
                   <option value="Monthly">Monthly</option>
                   <option value="Quarterly">Quarterly</option>
+                  <option value="Yearly">Yearly</option>
                 </select>
               </div>
             </div>
@@ -204,113 +404,170 @@ const SupplierReports = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               {/* Left Column - Overview and Chart */}
               <div className="lg:col-span-2 space-y-8">
-                {/* Overview Section */}
+                {/* Real-time Overview Section */}
                 <div className="card p-6">
-                  <h2 className="text-lg font-inter font-medium text-secondary-900 mb-6">Overview</h2>
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-lg font-inter font-medium text-secondary-900">Real-time Overview</h2>
+                    <div className="flex items-center gap-2 text-xs text-secondary-500">
+                      <Activity className="w-3 h-3" />
+                      Live Data
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                    {/* Total Profit */}
+                    {/* Total Revenue */}
                     <div className="text-center">
-                      <p className="text-2xl font-inter font-semibold text-secondary-900">
-                        ₹{(reportsData?.overviewMetrics?.totalProfit || 21190).toLocaleString('en-IN')}
-                      </p>
-                      <p className="text-sm font-inter text-secondary-600 mt-1">Total Profit</p>
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <TrendingUp className="w-4 h-4 text-green-500" />
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          ₹{(reportsData?.revenueAnalytics?.totalRevenue ?? 0).toLocaleString('en-IN')}
+                        </p>
+                      </div>
+                      <p className="text-sm font-inter text-secondary-600">Total Revenue</p>
                     </div>
 
-                    {/* Revenue */}
+                    {/* Total Orders */}
                     <div className="text-center">
-                      <p className="text-2xl font-inter font-semibold text-warning-100">
-                        ₹{(reportsData?.overviewMetrics?.revenue || 18300).toLocaleString('en-IN')}
-                      </p>
-                      <p className="text-sm font-inter text-secondary-600 mt-1">Revenue</p>
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <ShoppingCart className="w-4 h-4 text-blue-500" />
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          {reportsData?.ordersAnalytics?.totalOrders ?? 0}
+                        </p>
+                      </div>
+                      <p className="text-sm font-inter text-secondary-600">Total Orders</p>
                     </div>
 
-                    {/* Sales */}
+                    {/* Completion Rate */}
                     <div className="text-center">
-                      <p className="text-2xl font-inter font-semibold text-secondary-900">
-                        ₹{(reportsData?.overviewMetrics?.sales || 17432).toLocaleString('en-IN')}
-                      </p>
-                      <p className="text-sm font-inter text-secondary-600 mt-1">Sales</p>
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <BarChart3 className="w-4 h-4 text-purple-500" />
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          {(reportsData?.ordersAnalytics?.completionRate ?? 0).toFixed(1)}%
+                        </p>
+                      </div>
+                      <p className="text-sm font-inter text-secondary-600">Completion Rate</p>
                     </div>
 
-                    {/* Additional metrics row */}
+                    {/* Average Order Value */}
                     <div className="text-center">
-                      <p className="text-2xl font-inter font-semibold text-secondary-900">
-                        ₹{(reportsData?.overviewMetrics?.netPurchaseValue || 17432).toLocaleString('en-IN')}
-                      </p>
-                      <p className="text-sm font-inter text-secondary-600 mt-1">Net purchase value</p>
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <TrendingUp className="w-4 h-4 text-orange-500" />
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          ₹{(reportsData?.ordersAnalytics?.averageOrderValue ?? 0).toLocaleString('en-IN')}
+                        </p>
+                      </div>
+                      <p className="text-sm font-inter text-secondary-600">Avg Order Value</p>
                     </div>
 
+                    {/* Recent Activity */}
                     <div className="text-center">
-                      <p className="text-2xl font-inter font-semibold text-secondary-900">
-                        ₹{(reportsData?.overviewMetrics?.netSalesValue || 80432).toLocaleString('en-IN')}
-                      </p>
-                      <p className="text-sm font-inter text-secondary-600 mt-1">Net sales value</p>
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <Activity className="w-4 h-4 text-indigo-500" />
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          {reportsData?.ordersAnalytics?.recentOrders ?? 0}
+                        </p>
+                      </div>
+                      <p className="text-sm font-inter text-secondary-600">Recent Orders (7d)</p>
                     </div>
 
+                    {/* Pending Orders */}
                     <div className="text-center">
-                      <p className="text-2xl font-inter font-semibold text-secondary-900">
-                        ₹{(reportsData?.overviewMetrics?.momProfit || 30432).toLocaleString('en-IN')}
-                      </p>
-                      <p className="text-sm font-inter text-secondary-600 mt-1">MoM Profit</p>
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <Clock className="w-4 h-4 text-yellow-500" />
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          {reportsData?.ordersAnalytics?.pendingOrders ?? 0}
+                        </p>
+                      </div>
+                      <p className="text-sm font-inter text-secondary-600">Pending Orders</p>
                     </div>
 
+                    {/* Completed Orders */}
                     <div className="text-center">
-                      <p className="text-2xl font-inter font-semibold text-secondary-900">
-                        ₹{(reportsData?.overviewMetrics?.yoyProfit || 10432).toLocaleString('en-IN')}
-                      </p>
-                      <p className="text-sm font-inter text-secondary-600 mt-1">YoY Profit</p>
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <CheckCircle className="w-4 h-4 text-green-500" />
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          {reportsData?.ordersAnalytics?.completedOrders ?? 0}
+                        </p>
+                      </div>
+                      <p className="text-sm font-inter text-secondary-600">Completed Orders</p>
+                    </div>
+
+                    {/* Cancelled Orders */}
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <X className="w-4 h-4 text-red-500" />
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          {reportsData?.ordersAnalytics?.cancelledOrders ?? 0}
+                        </p>
+                      </div>
+                      <p className="text-sm font-inter text-secondary-600">Cancelled Orders</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Profit & Revenue Chart */}
+                {/* Real-time Sales Trend Chart */}
                 <div className="card p-6">
                   <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-lg font-inter font-medium text-secondary-900">Profit & Revenue</h2>
+                    <div>
+                      <h2 className="text-lg font-inter font-medium text-secondary-900">
+                        Sales Trend ({selectedPeriod} View)
+                      </h2>
+                      <p className="text-sm text-secondary-600 mt-1">Real-time revenue and order tracking</p>
+                    </div>
                     <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2 text-xs text-secondary-500">
+                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        Live Data
+                      </div>
                       <button className="text-sm font-inter text-secondary-600 hover:text-secondary-700 transition-colors">
                         Download
                       </button>
-                      <div className="flex items-center gap-2 bg-secondary-50 rounded-lg px-3 py-1">
-                        <span className="text-sm font-inter text-secondary-700">{selectedPeriod}</span>
-                      </div>
                     </div>
                   </div>
 
                   {/* Chart Area */}
-                  <div className="relative h-80">
-                    {/* Chart Background */}
-                    <div className="absolute inset-0 bg-gradient-to-b from-pink-50 to-transparent rounded-lg"></div>
-
-                    {/* Chart Content */}
-                    <div className="relative h-full flex items-end justify-between px-4 pb-8">
-                      {createChartData().map((dataPoint, index) => (
-                        <div key={index} className="flex flex-col items-center">
-                          {/* Data Point */}
-                          <div
-                            className="w-2 h-2 bg-pink-500 rounded-full mb-2"
-                            style={{
-                              marginBottom: `${(dataPoint.value / 80000) * 200}px`
-                            }}
-                          ></div>
-                          {/* Month Label */}
-                          <span className="text-xs font-inter text-secondary-600">{dataPoint.month}</span>
+                  <div className="h-80">
+                    {reportsData?.salesTrendData && createSalesTrendChartData() ? (
+                      <Line data={createSalesTrendChartData()} options={chartOptions} />
+                    ) : (
+                      <div className="h-full flex items-center justify-center">
+                        <div className="text-center">
+                          <BarChart3 className="w-12 h-12 text-secondary-300 mx-auto mb-3" />
+                          <p className="text-secondary-600">Loading chart data...</p>
                         </div>
-                      ))}
-                    </div>
-
-                    {/* Chart Value Display */}
-                    <div className="absolute top-4 left-4">
-                      <div className="bg-white rounded-lg shadow-sm px-3 py-2">
-                        <p className="text-xs font-inter text-secondary-600">Sales</p>
-                        <p className="text-lg font-inter font-semibold text-secondary-900">220,342,123$</p>
                       </div>
-                    </div>
+                    )}
+                  </div>
 
-                    {/* Legend */}
-                    <div className="absolute bottom-4 left-4 flex items-center gap-2">
-                      <div className="w-2 h-2 bg-pink-500 rounded-full"></div>
-                      <span className="text-xs font-inter text-secondary-600">Sales</span>
+                  {/* Chart Summary */}
+                  <div className="mt-6 grid grid-cols-3 gap-4 pt-4 border-t border-secondary-100">
+                    <div className="text-center">
+                      <p className="text-sm text-secondary-600">Peak Revenue Day</p>
+                      <p className="text-lg font-semibold text-secondary-900">
+                        ₹{reportsData?.salesTrendData ?
+                          Math.max(...reportsData.salesTrendData.map(d => d.revenue)).toLocaleString('en-IN') :
+                          '0'
+                        }
+                      </p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm text-secondary-600">Total Orders ({selectedPeriod})</p>
+                      <p className="text-lg font-semibold text-secondary-900">
+                        {reportsData?.salesTrendData ?
+                          reportsData.salesTrendData.reduce((sum, d) => sum + d.orders, 0) :
+                          0
+                        }
+                      </p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm text-secondary-600">
+                        Avg {selectedPeriod === 'Weekly' ? 'Daily' : selectedPeriod === 'Monthly' ? 'Daily' : selectedPeriod === 'Quarterly' ? 'Weekly' : 'Monthly'} Revenue
+                      </p>
+                      <p className="text-lg font-semibold text-secondary-900">
+                        ₹{reportsData?.salesTrendData && reportsData.salesTrendData.length > 0 ?
+                          (reportsData.salesTrendData.reduce((sum, d) => sum + d.revenue, 0) / reportsData.salesTrendData.length).toLocaleString('en-IN') :
+                          '0'
+                        }
+                      </p>
                     </div>
                   </div>
                 </div>

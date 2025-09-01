@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCart } from '../../contexts/CartContext';
 import { useDataRefresh } from '../../contexts/DataRefreshContext';
-import { productsAPI, categoriesAPI, ordersAPI } from '../../lib/api';
+import { productsAPI, categoriesAPI, ordersAPI, vendorDashboardAPI, userAPI } from '../../lib/api';
 import { useToast } from '../ui/Toast';
 import {
   Package,
@@ -48,6 +48,7 @@ const VendorDashboard = () => {
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('connected');
+  const [profile, setProfile] = useState(null);
 
   // Load data function (reusable for initial load and refresh)
   const loadData = async (showLoadingState = true) => {
@@ -98,9 +99,20 @@ const VendorDashboard = () => {
     }
   };
 
+  // Load profile data
+  const loadProfile = async () => {
+    try {
+      const profileData = await userAPI.getProfile();
+      setProfile(profileData);
+    } catch (error) {
+      console.error('Error loading profile:', error);
+    }
+  };
+
   // Load initial data on component mount
   useEffect(() => {
     loadData(true);
+    loadProfile();
   }, []);
 
   // Listen for global refresh triggers (e.g., after purchases)
@@ -181,8 +193,10 @@ const VendorDashboard = () => {
   }, [products, selectedCategory, searchTerm]);
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate('/');
+    const { error } = await signOut();
+    if (!error) {
+      navigate('/signin');
+    }
   };
 
   const handleManualRefresh = () => {
@@ -214,12 +228,16 @@ const VendorDashboard = () => {
     }
   };
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     if (!selectedProduct) return;
 
-    addToCart(selectedProduct, quantity);
-    showToast(`${selectedProduct.name} added to cart!`, 'success');
-    handleCloseModal();
+    try {
+      await addToCart(selectedProduct, quantity);
+      showToast(`${selectedProduct.name} added to cart!`, 'success');
+      handleCloseModal();
+    } catch (err) {
+      showToast('Failed to add item to cart', 'error');
+    }
   };
 
   const handleBuyNow = async () => {
@@ -236,9 +254,13 @@ const VendorDashboard = () => {
         return;
       }
 
+      // Calculate total amount
+      const totalAmount = quantity * selectedProduct.price;
+
       // Create order data
       const orderData = {
         supplier_id: selectedProduct.supplier_id,
+        total_amount: totalAmount,
         shipping_address: 'Default shipping address', // You might want to make this configurable
         notes: `Direct purchase - ${selectedProduct.name} (Qty: ${quantity})`
       };
@@ -385,8 +407,16 @@ const VendorDashboard = () => {
               <RefreshCw className={`w-6 h-6 text-secondary-700 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
 
-            <div className="w-10 h-10 bg-secondary-300 rounded-full flex items-center justify-center">
-              <User className="w-6 h-6 text-white" />
+            <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center overflow-hidden">
+              {profile?.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <User className="w-6 h-6 text-primary-600" />
+              )}
             </div>
           </div>
         </div>

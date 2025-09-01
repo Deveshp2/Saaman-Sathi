@@ -103,8 +103,10 @@ const VendorProducts = () => {
   }, [searchTerm, products]);
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate('/');
+    const { error } = await signOut();
+    if (!error) {
+      navigate('/signin');
+    }
   };
 
   const handleSearchChange = (e) => {

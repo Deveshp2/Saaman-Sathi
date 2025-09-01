@@ -1,32 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { dashboardAPI } from '../../lib/api';
-import { 
-  Home, 
-  Package, 
-  BarChart3, 
-  ShoppingCart, 
-  Store, 
-  Settings, 
+import { dashboardAPI, userAPI } from '../../lib/api';
+import {
+  Home,
+  Package,
+  BarChart3,
+  ShoppingCart,
+  Store,
+  Settings,
   LogOut,
   Search,
   Bell,
   User,
-  Loader2
+  Loader2,
+  Clock,
+  Truck,
+  CheckCircle,
+  X,
+  RefreshCw
 } from 'lucide-react';
 
 const SupplierDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { signOut } = useAuth();
-  
+
   // State for dashboard data
   const [dashboardData, setDashboardData] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch dashboard data on component mount
+  // Fetch dashboard data and profile on component mount
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
@@ -42,12 +49,49 @@ const SupplierDashboard = () => {
       }
     };
 
+    const loadProfile = async () => {
+      try {
+        const profileData = await userAPI.getProfile();
+        setProfile(profileData);
+      } catch (error) {
+        console.error('Error loading profile:', error);
+      }
+    };
+
     fetchDashboardData();
+    loadProfile();
+
+    // Set up auto-refresh every 30 seconds for real-time data
+    const refreshInterval = setInterval(() => {
+      fetchDashboardData();
+    }, 30000);
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(refreshInterval);
   }, []);
 
+  // Manual refresh function
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
+      setError(null);
+      const data = await dashboardAPI.getSupplierDashboard();
+      setDashboardData(data);
+    } catch (err) {
+      console.error('Error refreshing dashboard data:', err);
+      setError(err.message || 'Failed to refresh dashboard data');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+
+
   const handleSignOut = async () => {
-    await signOut();
-    navigate('/');
+    const { error } = await signOut();
+    if (!error) {
+      navigate('/signin');
+    }
   };
 
   const sidebarItems = [
@@ -123,11 +167,27 @@ const SupplierDashboard = () => {
 
           {/* Right Side */}
           <div className="flex items-center gap-5">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-inter text-secondary-700 hover:text-secondary-900 hover:bg-secondary-50 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
             <button className="p-2 hover:bg-secondary-50 rounded-lg transition-colors">
               <Bell className="w-6 h-6 text-secondary-700" />
             </button>
-            <div className="w-10 h-10 bg-secondary-300 rounded-full flex items-center justify-center">
-              <User className="w-6 h-6 text-white" />
+            <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center overflow-hidden">
+              {profile?.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <User className="w-6 h-6 text-primary-600" />
+              )}
             </div>
           </div>
         </div>
@@ -320,6 +380,111 @@ const SupplierDashboard = () => {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Orders Overview */}
+              <div className="mt-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-inter font-medium text-secondary-900">
+                    Orders Overview
+                  </h2>
+                  <button
+                    onClick={() => navigate('/supplier/orders')}
+                    className="text-sm font-inter text-primary-400 hover:text-primary-300 transition-colors"
+                  >
+                    View All Orders
+                  </button>
+                </div>
+                {/* Show empty state if no orders */}
+                {dashboardData?.ordersOverview?.totalOrders === 0 ? (
+                  <div className="card p-8 text-center">
+                    <ShoppingCart className="w-16 h-16 text-secondary-300 mx-auto mb-4" />
+                    <h3 className="text-lg font-inter font-medium text-secondary-900 mb-2">No Orders Yet</h3>
+                    <p className="text-secondary-600 mb-4">You haven't received any orders from vendors yet.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                  <div className="card p-6 text-center">
+                    <div className="w-8 h-8 bg-secondary-50 rounded mx-auto mb-3 flex items-center justify-center">
+                      <ShoppingCart className="w-5 h-5 text-secondary-400" />
+                    </div>
+                    <p className="text-2xl font-inter font-semibold text-secondary-900">
+                      {dashboardData?.ordersOverview?.totalOrders ?? 0}
+                    </p>
+                    <p className="text-sm font-inter font-medium text-secondary-600">Total Orders</p>
+                  </div>
+                  <div className="card p-6 text-center">
+                    <div className="w-8 h-8 bg-warning-50 rounded mx-auto mb-3 flex items-center justify-center">
+                      <Clock className="w-5 h-5 text-warning-200" />
+                    </div>
+                    <p className="text-2xl font-inter font-semibold text-secondary-900">
+                      {dashboardData?.ordersOverview?.pendingOrders ?? 0}
+                    </p>
+                    <p className="text-sm font-inter font-medium text-secondary-600">Pending</p>
+                  </div>
+                  <div className="card p-6 text-center">
+                    <div className="w-8 h-8 bg-info-50 rounded mx-auto mb-3 flex items-center justify-center">
+                      <Truck className="w-5 h-5 text-info-200" />
+                    </div>
+                    <p className="text-2xl font-inter font-semibold text-secondary-900">
+                      {dashboardData?.ordersOverview?.shippedOrders ?? 0}
+                    </p>
+                    <p className="text-sm font-inter font-medium text-secondary-600">Shipped</p>
+                  </div>
+                  <div className="card p-6 text-center">
+                    <div className="w-8 h-8 bg-success-50 rounded mx-auto mb-3 flex items-center justify-center">
+                      <CheckCircle className="w-5 h-5 text-success-200" />
+                    </div>
+                    <p className="text-2xl font-inter font-semibold text-secondary-900">
+                      {dashboardData?.ordersOverview?.deliveredOrders ?? 0}
+                    </p>
+                    <p className="text-sm font-inter font-medium text-secondary-600">Delivered</p>
+                  </div>
+                  <div className="card p-6 text-center">
+                    <div className="w-8 h-8 bg-red-50 rounded mx-auto mb-3 flex items-center justify-center">
+                      <X className="w-5 h-5 text-red-500" />
+                    </div>
+                    <p className="text-2xl font-inter font-semibold text-secondary-900">
+                      {dashboardData?.ordersOverview?.cancelledOrders ?? 0}
+                    </p>
+                    <p className="text-sm font-inter font-medium text-secondary-600">Cancelled</p>
+                  </div>
+                </div>
+
+                {/* Additional Order Metrics */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                  <div className="card p-6">
+                    <h3 className="text-lg font-inter font-medium text-secondary-900 mb-4">Recent Activity</h3>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          {dashboardData?.ordersOverview?.recentOrders ?? 0}
+                        </p>
+                        <p className="text-sm font-inter text-secondary-600">New orders (last 7 days)</p>
+                      </div>
+                      <div className="w-12 h-12 bg-primary-50 rounded-full flex items-center justify-center">
+                        <ShoppingCart className="w-6 h-6 text-primary-500" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="card p-6">
+                    <h3 className="text-lg font-inter font-medium text-secondary-900 mb-4">Total Order Value</h3>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-2xl font-inter font-semibold text-secondary-900">
+                          ₹ {(dashboardData?.ordersOverview?.totalOrderValue ?? 0).toLocaleString('en-IN')}
+                        </p>
+                        <p className="text-sm font-inter text-secondary-600">All time order value</p>
+                      </div>
+                      <div className="w-12 h-12 bg-success-50 rounded-full flex items-center justify-center">
+                        <BarChart3 className="w-6 h-6 text-success-200" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                  </>
+                )}
               </div>
 
               {/* Low Quantity Stock */}

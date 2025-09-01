@@ -6,10 +6,13 @@ import SignIn from './components/SignIn';
 import SupplierDashboard from './components/supplier/SupplierDashboard';
 import SupplierInventory from './components/supplier/SupplierInventory';
 import SupplierReports from './components/supplier/SupplierReports';
+import SupplierOrders from './components/supplier/SupplierOrders';
+import SupplierProfile from './components/supplier/SupplierProfile';
 import VendorDashboard from './components/vendor/VendorDashboard';
 import VendorOrders from './components/vendor/VendorOrders';
 import VendorProducts from './components/vendor/VendorProducts';
 import VendorCart from './components/vendor/VendorCart';
+import VendorProfile from './components/vendor/VendorProfile';
 import { AuthProvider } from './contexts/AuthContext';
 import { CartProvider } from './contexts/CartContext';
 import { DataRefreshProvider } from './contexts/DataRefreshContext';
@@ -44,15 +47,31 @@ function App() {
                 </ProtectedRoute>
               } 
             />
-            <Route 
-              path="/supplier/reports" 
+            <Route
+              path="/supplier/reports"
               element={
                 <ProtectedRoute userType="supplier">
                   <SupplierReports />
                 </ProtectedRoute>
-              } 
+              }
             />
-            
+            <Route
+              path="/supplier/orders"
+              element={
+                <ProtectedRoute userType="supplier">
+                  <SupplierOrders />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/supplier/settings"
+              element={
+                <ProtectedRoute userType="supplier">
+                  <SupplierProfile />
+                </ProtectedRoute>
+              }
+            />
+
             {/* Vendor Routes */}
             <Route
               path="/vendor/dashboard"
@@ -90,6 +109,16 @@ function App() {
                 <ProtectedRoute userType="vendor">
                   <CartProvider>
                     <VendorCart />
+                  </CartProvider>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/vendor/settings"
+              element={
+                <ProtectedRoute userType="vendor">
+                  <CartProvider>
+                    <VendorProfile />
                   </CartProvider>
                 </ProtectedRoute>
               }

@@ -20,7 +20,11 @@ import {
   Loader2,
   AlertTriangle,
   CheckCircle,
-  ImageIcon
+  ImageIcon,
+  RefreshCw,
+  Activity,
+  TrendingUp,
+  TrendingDown
 } from 'lucide-react';
 
 const SupplierInventory = () => {
@@ -41,6 +45,15 @@ const SupplierInventory = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [loadingMessage, setLoadingMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [inventoryStats, setInventoryStats] = useState({
+    totalProducts: 0,
+    lowStockProducts: 0,
+    outOfStockProducts: 0,
+    totalValue: 0,
+    averagePrice: 0
+  });
   const [selectedImage, setSelectedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [imageUploading, setImageUploading] = useState(false);
@@ -59,8 +72,10 @@ const SupplierInventory = () => {
   });
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate('/');
+    const { error } = await signOut();
+    if (!error) {
+      navigate('/signin');
+    }
   };
 
   const handleEditProduct = (product) => {
@@ -87,6 +102,28 @@ const SupplierInventory = () => {
 
 
 
+  // Calculate inventory statistics
+  const calculateInventoryStats = (productsData) => {
+    const totalProducts = productsData.length;
+    const lowStockProducts = productsData.filter(p =>
+      p.stock_quantity <= (p.min_stock_level || 0) && p.stock_quantity > 0
+    ).length;
+    const outOfStockProducts = productsData.filter(p => p.stock_quantity === 0).length;
+    const totalValue = productsData.reduce((sum, p) =>
+      sum + (p.stock_quantity * (p.cost_price || 0)), 0
+    );
+    const averagePrice = totalProducts > 0 ?
+      productsData.reduce((sum, p) => sum + (p.price || 0), 0) / totalProducts : 0;
+
+    return {
+      totalProducts,
+      lowStockProducts,
+      outOfStockProducts,
+      totalValue,
+      averagePrice
+    };
+  };
+
   // Load initial data on component mount
   useEffect(() => {
     const loadInitialData = async () => {
@@ -94,11 +131,13 @@ const SupplierInventory = () => {
         setLoading(true);
         const [categoriesData, productsData] = await Promise.all([
           categoriesAPI.getAll(),
-          productsAPI.getAll()
+          productsAPI.getSupplierProducts() // Use getSupplierProducts to only show supplier's own products
         ]);
         setCategories(categoriesData);
         setProducts(productsData);
         setFilteredProducts(productsData);
+        setInventoryStats(calculateInventoryStats(productsData));
+        setLastUpdated(new Date());
       } catch (error) {
         console.error('Error loading data:', error);
         setError('Failed to load inventory data');
@@ -106,8 +145,38 @@ const SupplierInventory = () => {
         setLoading(false);
       }
     };
+
     loadInitialData();
+
+    // Set up auto-refresh every 30 seconds for real-time data
+    const refreshInterval = setInterval(() => {
+      loadInitialData();
+    }, 30000);
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(refreshInterval);
   }, []);
+
+  // Manual refresh function
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
+      const [categoriesData, productsData] = await Promise.all([
+        categoriesAPI.getAll(),
+        productsAPI.getSupplierProducts() // Use getSupplierProducts to only show supplier's own products
+      ]);
+      setCategories(categoriesData);
+      setProducts(productsData);
+      setFilteredProducts(productsData);
+      setInventoryStats(calculateInventoryStats(productsData));
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      setError('Failed to refresh data');
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Filter products based on search term
   useEffect(() => {
@@ -636,6 +705,19 @@ const SupplierInventory = () => {
 
           {/* Right Side */}
           <div className="flex items-center gap-5">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-inter text-secondary-700 hover:text-secondary-900 hover:bg-secondary-50 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+            {lastUpdated && (
+              <span className="text-xs text-secondary-500">
+                Last updated: {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
             <button className="p-2 hover:bg-secondary-50 rounded-lg transition-colors">
               <Bell className="w-6 h-6 text-secondary-700" />
             </button>
@@ -656,9 +738,15 @@ const SupplierInventory = () => {
 
           {/* Header */}
           <div className="flex justify-between items-center mb-8">
-            <h1 className="text-2xl font-inter font-medium text-secondary-900">
-              Inventory Management
-            </h1>
+            <div>
+              <h1 className="text-2xl font-inter font-medium text-secondary-900">
+                Inventory Management
+              </h1>
+              <div className="flex items-center gap-2 mt-1">
+                <Activity className="w-3 h-3 text-green-500" />
+                <span className="text-xs text-secondary-500">Real-time data</span>
+              </div>
+            </div>
             <button
               onClick={() => setShowAddModal(true)}
               className="btn-primary flex items-center gap-2"
@@ -666,6 +754,59 @@ const SupplierInventory = () => {
               <Plus className="w-5 h-5" />
               Add New Item
             </button>
+          </div>
+
+          {/* Real-time Inventory Statistics */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+            <div className="card p-6 text-center">
+              <div className="w-8 h-8 bg-blue-50 rounded mx-auto mb-3 flex items-center justify-center">
+                <Package className="w-5 h-5 text-blue-500" />
+              </div>
+              <p className="text-2xl font-inter font-semibold text-secondary-900">
+                {inventoryStats.totalProducts}
+              </p>
+              <p className="text-sm font-inter font-medium text-secondary-600">Total Products</p>
+            </div>
+
+            <div className="card p-6 text-center">
+              <div className="w-8 h-8 bg-yellow-50 rounded mx-auto mb-3 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-yellow-500" />
+              </div>
+              <p className="text-2xl font-inter font-semibold text-secondary-900">
+                {inventoryStats.lowStockProducts}
+              </p>
+              <p className="text-sm font-inter font-medium text-secondary-600">Low Stock</p>
+            </div>
+
+            <div className="card p-6 text-center">
+              <div className="w-8 h-8 bg-red-50 rounded mx-auto mb-3 flex items-center justify-center">
+                <X className="w-5 h-5 text-red-500" />
+              </div>
+              <p className="text-2xl font-inter font-semibold text-secondary-900">
+                {inventoryStats.outOfStockProducts}
+              </p>
+              <p className="text-sm font-inter font-medium text-secondary-600">Out of Stock</p>
+            </div>
+
+            <div className="card p-6 text-center">
+              <div className="w-8 h-8 bg-green-50 rounded mx-auto mb-3 flex items-center justify-center">
+                <TrendingUp className="w-5 h-5 text-green-500" />
+              </div>
+              <p className="text-2xl font-inter font-semibold text-secondary-900">
+                ₹{inventoryStats.totalValue.toLocaleString('en-IN')}
+              </p>
+              <p className="text-sm font-inter font-medium text-secondary-600">Total Value</p>
+            </div>
+
+            <div className="card p-6 text-center">
+              <div className="w-8 h-8 bg-purple-50 rounded mx-auto mb-3 flex items-center justify-center">
+                <BarChart3 className="w-5 h-5 text-purple-500" />
+              </div>
+              <p className="text-2xl font-inter font-semibold text-secondary-900">
+                ₹{inventoryStats.averagePrice.toLocaleString('en-IN')}
+              </p>
+              <p className="text-sm font-inter font-medium text-secondary-600">Avg Price</p>
+            </div>
           </div>
 
           {/* Inventory Table */}
@@ -1479,4 +1620,4 @@ const SupplierInventory = () => {
   );
 };
 
-export default SupplierInventory; 
+export default SupplierInventory;

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext();
@@ -12,29 +12,152 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+    const [user, setUser] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const authCheckInProgress = useRef(false);
+    const lastActivityTimestamp = useRef(Date.now());
+    const sessionTimeoutRef = useRef(null);
 
-  useEffect(() => {
-    // Get initial session
-    const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user || null);
-      setLoading(false);
-    };
+    // Function to get session that prevents concurrent calls
+    const getSession = async (force = false) => {
+      // Prevent concurrent session checks
+      if (authCheckInProgress.current && !force) {
+        return;
+      }
 
-    getSession();
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        setUser(session?.user || null);
+      try {
+        authCheckInProgress.current = true;
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          setUser(session.user);
+          setIsAuthenticated(true);
+          localStorage.setItem('user', JSON.stringify(session.user));
+          localStorage.setItem('sessionActive', 'true');
+        } else if (force) {
+          // Only clear on forced checks to prevent unwanted logouts
+          setUser(null);
+          setIsAuthenticated(false);
+          localStorage.removeItem('user');
+          localStorage.removeItem('sessionActive');
+        }
+      } catch (error) {
+        console.error('Session check error:', error);
+      } finally {
+        authCheckInProgress.current = false;
         setLoading(false);
       }
-    );
+    };
 
-    return () => subscription.unsubscribe();
-  }, []);
+    // Track user activity
+    const updateActivity = () => {
+      lastActivityTimestamp.current = Date.now();
+    };
+
+    // Handle storage events for cross-tab synchronization
+    const handleStorageChange = (event) => {
+      if (event.key === 'sessionActive') {
+        if (event.newValue === 'true') {
+          // Another tab logged in
+          const storedUser = localStorage.getItem('user');
+          if (storedUser) {
+            try {
+              setUser(JSON.parse(storedUser));
+              setIsAuthenticated(true);
+              setLoading(false);
+            } catch (e) {
+              console.error('Failed to parse user from localStorage', e);
+            }
+          }
+        } else if (event.newValue === null) {
+          // Another tab logged out
+          setUser(null);
+          setIsAuthenticated(false);
+          setLoading(false);
+        }
+      }
+    };
+
+    useEffect(() => {
+      // Check for stored session first
+      const sessionActive = localStorage.getItem('sessionActive') === 'true';
+      const storedUser = localStorage.getItem('user');
+      
+      if (sessionActive && storedUser) {
+        try {
+          setUser(JSON.parse(storedUser));
+          setIsAuthenticated(true);
+        } catch (e) {
+          localStorage.removeItem('user');
+        }
+      }
+
+      // Initialize session
+      getSession();
+
+      // Listen for auth changes
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          if (session?.user) {
+            setUser(session.user);
+            setIsAuthenticated(true);
+            localStorage.setItem('user', JSON.stringify(session.user));
+            localStorage.setItem('sessionActive', 'true');
+          } else if (event === 'SIGNED_OUT') {
+            setUser(null);
+            setIsAuthenticated(false);
+            localStorage.removeItem('user');
+            localStorage.removeItem('sessionActive');
+          }
+          setLoading(false);
+        }
+      );
+
+      // Handle visibility change events
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          // Only verify session if we're supposed to be logged in
+          // and it's been more than 5 seconds since last check
+          if (isAuthenticated && Date.now() - lastActivityTimestamp.current > 5000) {
+            getSession();
+          }
+          updateActivity();
+        }
+      };
+
+      // Set up event listeners for user activity
+      const activityEvents = ['mousedown', 'keydown', 'touchstart', 'click'];
+      activityEvents.forEach(event => {
+        document.addEventListener(event, updateActivity);
+      });
+      
+      // Add event listeners
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('storage', handleStorageChange);
+
+      // Set a periodic check for session validity when the tab is active
+      const periodicSessionCheck = () => {
+        if (document.visibilityState === 'visible' && isAuthenticated) {
+          getSession();
+        }
+        sessionTimeoutRef.current = setTimeout(periodicSessionCheck, 5 * 60 * 1000); // Check every 5 minutes
+      };
+      
+      sessionTimeoutRef.current = setTimeout(periodicSessionCheck, 5 * 60 * 1000);
+
+      return () => {
+        subscription.unsubscribe();
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('storage', handleStorageChange);
+        activityEvents.forEach(event => {
+          document.removeEventListener(event, updateActivity);
+        });
+        if (sessionTimeoutRef.current) {
+          clearTimeout(sessionTimeoutRef.current);
+        }
+      };
+    }, [isAuthenticated]);
 
   const signUp = async (email, password, fullName, userType, companyName = null) => {
     try {
@@ -103,8 +226,16 @@ export const AuthProvider = ({ children }) => {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+
+      // Clear user state immediately
+      setUser(null);
+      setIsAuthenticated(false);
+      localStorage.removeItem('user');
+      localStorage.removeItem('sessionActive');
+
       return { error: null };
     } catch (error) {
+      console.error('Sign out error:', error);
       return { error };
     }
   };
@@ -122,4 +253,4 @@ export const AuthProvider = ({ children }) => {
       {children}
     </AuthContext.Provider>
   );
-}; 
+};
